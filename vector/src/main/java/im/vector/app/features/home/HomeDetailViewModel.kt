@@ -26,6 +26,7 @@ import im.vector.app.core.platform.EmptyViewEvents
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.core.resources.StringProvider
 import im.vector.app.features.grouplist.SelectedGroupDataSource
+import im.vector.app.features.grouplist.SelectedSpaceDataSource
 import im.vector.app.features.ui.UiStateRepository
 import io.reactivex.schedulers.Schedulers
 import org.matrix.android.sdk.api.session.Session
@@ -40,6 +41,7 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
                                                       private val session: Session,
                                                       private val uiStateRepository: UiStateRepository,
                                                       private val selectedGroupStore: SelectedGroupDataSource,
+                                                      private val selectedSpaceStore: SelectedSpaceDataSource,
                                                       private val homeRoomListStore: HomeRoomListDataSource,
                                                       private val stringProvider: StringProvider)
     : VectorViewModel<HomeDetailViewState, HomeDetailAction, EmptyViewEvents>(initialState) {
@@ -68,6 +70,7 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
     init {
         observeSyncState()
         observeSelectedGroupStore()
+        observeSelectedSpaceStore()
         observeRoomSummaries()
     }
 
@@ -106,6 +109,17 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
                 .subscribe {
                     setState {
                         copy(groupSummary = it)
+                    }
+                }
+                .disposeOnClear()
+    }
+
+    private fun observeSelectedSpaceStore() {
+        selectedSpaceStore
+                .observe()
+                .subscribe {
+                    setState {
+                        copy(spaceSummary = it)
                     }
                 }
                 .disposeOnClear()

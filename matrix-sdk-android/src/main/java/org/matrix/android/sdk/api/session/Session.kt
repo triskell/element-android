@@ -45,6 +45,7 @@ import org.matrix.android.sdk.api.session.search.SearchService
 import org.matrix.android.sdk.api.session.securestorage.SecureStorageService
 import org.matrix.android.sdk.api.session.securestorage.SharedSecretStorageService
 import org.matrix.android.sdk.api.session.signout.SignOutService
+import org.matrix.android.sdk.api.session.space.SpaceService
 import org.matrix.android.sdk.api.session.sync.FilterService
 import org.matrix.android.sdk.api.session.sync.SyncState
 import org.matrix.android.sdk.api.session.terms.TermsService
@@ -211,6 +212,11 @@ interface Session :
      * Returns the search service associated with the session
      */
     fun searchService(): SearchService
+
+    /**
+     * Returns the space service associated with the session
+     */
+    fun spaceService(): SpaceService
 
     /**
      * Add a listener to the session.
