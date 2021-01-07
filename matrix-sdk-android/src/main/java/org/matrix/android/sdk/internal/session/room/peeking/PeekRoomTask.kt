@@ -17,6 +17,7 @@
 package org.matrix.android.sdk.internal.session.room.peeking
 
 import org.matrix.android.sdk.api.MatrixPatterns
+import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.events.model.EventType
 import org.matrix.android.sdk.api.session.events.model.toModel
 import org.matrix.android.sdk.api.session.room.model.RoomAvatarContent
@@ -65,12 +66,8 @@ internal class DefaultPeekRoomTask @Inject constructor(
         }
 
         // Is it a public room?
-        val publicRepoResult = when (getRoomDirectoryVisibilityTask.execute(GetRoomDirectoryVisibilityTask.Params(roomId))) {
-            RoomDirectoryVisibility.PRIVATE -> {
-                // We cannot resolve this room :/
-                null
-            }
-            RoomDirectoryVisibility.PUBLIC  -> {
+        val publicRepoResult = when (tryOrNull { getRoomDirectoryVisibilityTask.execute(GetRoomDirectoryVisibilityTask.Params(roomId)) }) {
+            RoomDirectoryVisibility.PUBLIC -> {
                 // Try to find it in directory
                 val filter = if (isAlias) PublicRoomsFilter(searchTerm = params.roomIdOrAlias.substring(1))
                 else null
@@ -82,6 +79,10 @@ internal class DefaultPeekRoomTask @Inject constructor(
                                 limit = 20.takeIf { filter != null } ?: 100
                         )
                 )).chunk?.firstOrNull { it.roomId == roomId }
+            }
+            else                           -> {
+                // We cannot resolve this room :/
+                null
             }
         }
 
