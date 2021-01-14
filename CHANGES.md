@@ -38,6 +38,7 @@ Improvements 🙌:
  - Store megolm outbound session to improve send time of first message after app launch.
  - Warn user when they are leaving a not public room (#1460)
  - Option to disable emoji keyboard (#2563)
+ - Improve initial sync performance (#983)
 
 Bugfix 🐛:
  - Unspecced msgType field in m.sticker (#2580)

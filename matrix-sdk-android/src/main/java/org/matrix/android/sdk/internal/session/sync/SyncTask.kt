@@ -149,62 +149,51 @@ internal class DefaultSyncTask @Inject constructor(
             Timber.v("INIT_SYNC no need to split")
             handleTheWholeResponse(workingFile)
         } else {
-            // Split into several smaller files
             Timber.v("INIT_SYNC Split into several smaller files")
+            // This file will contain the initial sync without the joined rooms
             val everythingElseFile = File(workingDir, "initSyncSimple.json")
-            var listOfFiles = listOf<File>()
-
-            RandomAccessFile(workingFile, "r").use { raf ->
+            // Those files will contain the joined rooms
+            val joinedRoomsFiles = RandomAccessFile(workingFile, "r").use { raf ->
                 // Search beginning of join room
-                val byteArray = ByteArray(BUFFER_SIZE)
+                val buffer = ByteArray(BUFFER_SIZE)
 
                 // Create at least 2 new files, some with the joined rooms and one with everything else
-                val joinRoomsBoundaries = searchJoinRoomsBoundaries(raf, syncResponseLength, byteArray)
+                val joinRoomsBoundaries = searchJoinRoomsBoundaries(raf, syncResponseLength, buffer)
 
-                // Split to 2 files
                 if (joinRoomsBoundaries.isValid()) {
-                    createFirstFile(raf, joinRoomsBoundaries, syncResponseLength, everythingElseFile, byteArray)
+                    createFirstFile(raf, joinRoomsBoundaries, syncResponseLength, everythingElseFile, buffer)
 
-                    // Join rooms files
+                    // Joined rooms files
                     val joinRoomContentIndexes = Range(
                             joinRoomsBoundaries.indexStart + """"join":{""".length,
                             joinRoomsBoundaries.indexEnd - 1
                     )
                     // Search for indexes to split in smaller files
-                    val indexes = getRoomIndexes(raf, joinRoomContentIndexes, byteArray)
+                    val indexes = getRoomIndexes(raf, joinRoomContentIndexes, buffer)
 
                     // OK We now have an list of separator indexes, map that to a list of files, and copy content to the file
-                    listOfFiles = indexes
+                    indexes
                             .take(indexes.size - 1)
                             .mapIndexed { index, startPosition ->
                                 val endPosition = indexes[index + 1] - 1
                                 File(workingDir, "rooms_$index.json")
-                                        .also { copyPartialJoinRoomsToFile(raf, startPosition, endPosition, it, byteArray) }
+                                        .also { copyPartialJoinRoomsToFile(raf, startPosition, endPosition, it, buffer) }
                             }
                             .onEach { Timber.v("INIT_SYNC file ${it.name}, size ${it.length()} bytes") }
                 } else {
                     // Should not happen, handle the whole file...
                     handleTheWholeResponse(workingFile)
                     // Delete all files
-                    // TODO
-                    // workingDir.deleteRecursively()
+                    workingDir.deleteRecursively()
                     return
                 }
             }
 
             // Check that we haven't lost anything during the split
-            val splitFilesLength = everythingElseFile.length().toInt() + """"join":{}""".length +
-                    listOfFiles.sumBy { it.length().toInt() - SUB_FILE_HEADER.length - SUB_FILE_FOOTER.length + 1 }
-
-            if (splitFilesLength != syncResponseLength) {
-                Timber.w("INIT_SYNC something is wrong. Expecting $syncResponseLength cumulated bytes and get $splitFilesLength bytes")
-            } else {
-                Timber.v("INIT_SYNC original file size and sum of split files sizes are equal!")
-            }
+            checkFileSizes(everythingElseFile, joinedRoomsFiles, syncResponseLength)
 
             // We can delete the first file now
-            // TODO
-            // workingFile.delete()
+            workingFile.delete()
 
             // OK, lets read and parse the main file
             Timber.v("INIT_SYNC handle main file")
@@ -212,11 +201,21 @@ internal class DefaultSyncTask @Inject constructor(
                     .let { MoshiProvider.providesMoshi().adapter(SyncResponse::class.java).fromJson(it)!! }
 
             // Handle the split sync response
-            syncResponseHandler.handleResponse(syncResponse, null, listOfFiles)
+            syncResponseHandler.handleResponse(syncResponse, null, joinedRoomsFiles)
 
             // Delete all files
-            // TODO
-            // workingDir.deleteRecursively()
+            workingDir.deleteRecursively()
+        }
+    }
+
+    private fun checkFileSizes(everythingElseFile: File, joinedRoomsFiles: List<File>, syncResponseLength: Int) {
+        val splitFilesLength = everythingElseFile.length().toInt() + """"join":{}""".length +
+                joinedRoomsFiles.sumBy { it.length().toInt() - SUB_FILE_HEADER.length - SUB_FILE_FOOTER.length + 1 }
+
+        if (splitFilesLength != syncResponseLength) {
+            Timber.w("INIT_SYNC something is wrong. Expecting $syncResponseLength cumulated bytes and get $splitFilesLength bytes")
+        } else {
+            Timber.v("INIT_SYNC original file size and sum of split files sizes are equal!")
         }
     }
 
@@ -224,7 +223,7 @@ internal class DefaultSyncTask @Inject constructor(
                                 range: Range,
                                 syncResponseLength: Int,
                                 everythingElseFile: File,
-                                byteArray: ByteArray) {
+                                buffer: ByteArray) {
         var cumul = 0
         // First file
         Timber.v("INIT_SYNC write first file")
@@ -233,8 +232,8 @@ internal class DefaultSyncTask @Inject constructor(
             // Copy first part
             Timber.v("INIT_SYNC copy first part")
             while (cumul < range.indexStart) {
-                val read = raf.read(byteArray, 0, min(BUFFER_SIZE, range.indexStart - cumul))
-                everythingElseOutput.write(byteArray, 0, read)
+                val read = raf.read(buffer, 0, min(BUFFER_SIZE, range.indexStart - cumul))
+                everythingElseOutput.write(buffer, 0, read)
                 cumul += read
             }
             // Copy second part
@@ -243,8 +242,8 @@ internal class DefaultSyncTask @Inject constructor(
             cumul = range.indexEnd
             var read = 1
             while (read > 0) {
-                read = raf.read(byteArray, 0, min(BUFFER_SIZE, syncResponseLength - cumul))
-                everythingElseOutput.write(byteArray, 0, read)
+                read = raf.read(buffer, 0, min(BUFFER_SIZE, syncResponseLength - cumul))
+                everythingElseOutput.write(buffer, 0, read)
                 cumul += read
             }
         }
@@ -258,9 +257,9 @@ internal class DefaultSyncTask @Inject constructor(
 
     private fun searchJoinRoomsBoundaries(raf: RandomAccessFile,
                                           syncResponseLength: Int,
-                                          byteArray: ByteArray): Range {
+                                          buffer: ByteArray): Range {
         // First try without offset
-        val firstTry = searchJoinRoomsBoundariesWithOffset(raf, syncResponseLength, 0, byteArray)
+        val firstTry = searchJoinRoomsBoundariesWithOffset(raf, syncResponseLength, 0, buffer)
         if (firstTry.isValid()) {
             return firstTry
         }
@@ -268,7 +267,7 @@ internal class DefaultSyncTask @Inject constructor(
         Timber.v("INIT_SYNC searchJoinRoomsBoundaries with an offset")
 
         // Try again with an offset, it can happen if the search pattern is between two read buffers
-        val secondTry = searchJoinRoomsBoundariesWithOffset(raf, syncResponseLength, 50, byteArray)
+        val secondTry = searchJoinRoomsBoundariesWithOffset(raf, syncResponseLength, 50, buffer)
 
         // secondTry can be worst than first try, ensure we always take the valid value (we should not have both result with not found index)
         return Range(
@@ -277,7 +276,10 @@ internal class DefaultSyncTask @Inject constructor(
         )
     }
 
-    private fun searchJoinRoomsBoundariesWithOffset(raf: RandomAccessFile, syncResponseLength: Int, offset: Int, byteArray: ByteArray): Range {
+    private fun searchJoinRoomsBoundariesWithOffset(raf: RandomAccessFile,
+                                                    syncResponseLength: Int,
+                                                    offset: Int,
+                                                    buffer: ByteArray): Range {
         var roomBeginIndexStart = -1
         // Index of `,"invite":"`
         var roomEndIndexStart = -1
@@ -289,10 +291,10 @@ internal class DefaultSyncTask @Inject constructor(
         raf.seek(offset.toLong())
 
         while (read > 0) {
-            read = raf.read(byteArray, 0, min(BUFFER_SIZE, syncResponseLength - cumul))
+            read = raf.read(buffer, 0, min(BUFFER_SIZE, syncResponseLength - cumul))
 
             // Search beginning of joined room section
-            val roomBeginIndex = byteArray.firstIndexOf(ROOM_BEGIN, read)
+            val roomBeginIndex = buffer.firstIndexOf(ROOM_BEGIN, read)
 
             if (roomBeginIndex != -1 && roomBeginIndexStart == -1) {
                 roomBeginIndexStart = cumul + roomBeginIndex
@@ -301,7 +303,7 @@ internal class DefaultSyncTask @Inject constructor(
 
             if (roomEndIndexStart == -1) {
                 // Search end of joined room section
-                val roomEndIndex = byteArray.firstIndexOf(ROOM_END, read)
+                val roomEndIndex = buffer.firstIndexOf(ROOM_END, read)
                 if (roomEndIndex != -1) {
                     roomEndIndexStart = cumul + roomEndIndex
                     Timber.v("INIT_SYNC room endIndex $roomEndIndexStart")
@@ -315,7 +317,7 @@ internal class DefaultSyncTask @Inject constructor(
         return Range(roomBeginIndexStart, roomEndIndexStart)
     }
 
-    private fun getRoomIndexes(raf: RandomAccessFile, joinRoomContentIndexes: Range, byteArray: ByteArray): List<Int> {
+    private fun getRoomIndexes(raf: RandomAccessFile, joinRoomContentIndexes: Range, buffer: ByteArray): List<Int> {
         val indexes = mutableListOf(joinRoomContentIndexes.indexStart)
         var position = joinRoomContentIndexes.indexStart
         while (position + MAX_ROOM_FILE_SIZE < joinRoomContentIndexes.indexEnd) {
@@ -323,13 +325,13 @@ internal class DefaultSyncTask @Inject constructor(
             position += MAX_ROOM_FILE_SIZE
             raf.seek(position.toLong())
 
-            var read = raf.read(byteArray, 0, min(BUFFER_SIZE, joinRoomContentIndexes.indexEnd - position))
-            var index = byteArray.firstIndexOf(ROOM_SPLIT, read)
+            var read = raf.read(buffer, 0, min(BUFFER_SIZE, joinRoomContentIndexes.indexEnd - position))
+            var index = buffer.firstIndexOf(ROOM_SPLIT, read)
             while (index == -1 && read > 0) {
                 // Keep reading
                 position += read
-                read = raf.read(byteArray, 0, min(BUFFER_SIZE, joinRoomContentIndexes.indexEnd - position))
-                index = byteArray.firstIndexOf(ROOM_SPLIT, read)
+                read = raf.read(buffer, 0, min(BUFFER_SIZE, joinRoomContentIndexes.indexEnd - position))
+                index = buffer.firstIndexOf(ROOM_SPLIT, read)
             }
             if (index == -1) {
                 // End of section
@@ -337,7 +339,7 @@ internal class DefaultSyncTask @Inject constructor(
             } else {
                 // + 2 to skip "}," from ROOM_SPLIT
                 position += index + 2
-                Timber.v("INIT_SYNC room separator found: $position")
+                Timber.v("INIT_SYNC room separator found at index $position")
                 indexes.add(position)
             }
         }
@@ -363,10 +365,9 @@ internal class DefaultSyncTask @Inject constructor(
 
     companion object {
         private const val TIMEOUT_MARGIN: Long = 10_000
-        private const val BUFFER_SIZE = 10 * 1024
+        private const val BUFFER_SIZE = 100 * 1024
 
-        // TODO Put a greater value
-        private const val MAX_ROOM_FILE_SIZE = 100 * 1024 // 1024 * 1024
+        private const val MAX_ROOM_FILE_SIZE = 500 * 1024
 
         private val ROOM_BEGIN = """"join":{"!""".toByteArray()
         private val ROOM_END = """"invite":{""".toByteArray()

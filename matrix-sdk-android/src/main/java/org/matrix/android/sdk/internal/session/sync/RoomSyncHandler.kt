@@ -66,7 +66,6 @@ import org.matrix.android.sdk.internal.session.sync.model.RoomSyncEphemeral
 import org.matrix.android.sdk.internal.session.sync.model.RoomsSyncResponse
 import timber.log.Timber
 import java.io.File
-import java.nio.charset.Charset
 import javax.inject.Inject
 
 internal class RoomSyncHandler @Inject constructor(private val readReceiptHandler: ReadReceiptHandler,
