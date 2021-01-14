@@ -49,6 +49,7 @@ import org.matrix.android.sdk.internal.database.query.where
 import org.matrix.android.sdk.internal.di.MoshiProvider
 import org.matrix.android.sdk.internal.di.UserId
 import org.matrix.android.sdk.internal.session.DefaultInitialSyncProgressService
+import org.matrix.android.sdk.internal.session.forEachWithProgress
 import org.matrix.android.sdk.internal.session.mapWithProgress
 import org.matrix.android.sdk.internal.session.room.membership.RoomChangeMembershipStateDataSource
 import org.matrix.android.sdk.internal.session.room.membership.RoomMemberEventHandler
@@ -58,11 +59,14 @@ import org.matrix.android.sdk.internal.session.room.timeline.PaginationDirection
 import org.matrix.android.sdk.internal.session.room.timeline.TimelineInput
 import org.matrix.android.sdk.internal.session.room.typing.TypingEventContent
 import org.matrix.android.sdk.internal.session.sync.model.InvitedRoomSync
+import org.matrix.android.sdk.internal.session.sync.model.JoinedRoomSyncResponse
 import org.matrix.android.sdk.internal.session.sync.model.RoomSync
 import org.matrix.android.sdk.internal.session.sync.model.RoomSyncAccountData
 import org.matrix.android.sdk.internal.session.sync.model.RoomSyncEphemeral
 import org.matrix.android.sdk.internal.session.sync.model.RoomsSyncResponse
 import timber.log.Timber
+import java.io.File
+import java.nio.charset.Charset
 import javax.inject.Inject
 
 internal class RoomSyncHandler @Inject constructor(private val readReceiptHandler: ReadReceiptHandler,
@@ -77,6 +81,7 @@ internal class RoomSyncHandler @Inject constructor(private val readReceiptHandle
                                                    private val timelineInput: TimelineInput) {
 
     sealed class HandlingStrategy {
+        data class JOINED_SPLIT(val joinRoomSyncFiles: List<File>) : HandlingStrategy()
         data class JOINED(val data: Map<String, RoomSync>) : HandlingStrategy()
         data class INVITED(val data: Map<String, InvitedRoomSync>) : HandlingStrategy()
         data class LEFT(val data: Map<String, RoomSync>) : HandlingStrategy()
@@ -86,10 +91,15 @@ internal class RoomSyncHandler @Inject constructor(private val readReceiptHandle
             realm: Realm,
             roomsSyncResponse: RoomsSyncResponse,
             isInitialSync: Boolean,
-            reporter: DefaultInitialSyncProgressService? = null
+            reporter: DefaultInitialSyncProgressService? = null,
+            joinRoomSyncFiles: List<File>?
     ) {
         Timber.v("Execute transaction from $this")
-        handleRoomSync(realm, HandlingStrategy.JOINED(roomsSyncResponse.join), isInitialSync, reporter)
+        if (joinRoomSyncFiles != null) {
+            handleRoomSync(realm, HandlingStrategy.JOINED_SPLIT(joinRoomSyncFiles), isInitialSync, reporter)
+        } else {
+            handleRoomSync(realm, HandlingStrategy.JOINED(roomsSyncResponse.join), isInitialSync, reporter)
+        }
         handleRoomSync(realm, HandlingStrategy.INVITED(roomsSyncResponse.invite), isInitialSync, reporter)
         handleRoomSync(realm, HandlingStrategy.LEFT(roomsSyncResponse.leave), isInitialSync, reporter)
     }
@@ -104,22 +114,41 @@ internal class RoomSyncHandler @Inject constructor(private val readReceiptHandle
         }
         val syncLocalTimeStampMillis = System.currentTimeMillis()
         val rooms = when (handlingStrategy) {
-            is HandlingStrategy.JOINED  ->
+            is HandlingStrategy.JOINED_SPLIT -> {
+                handlingStrategy.joinRoomSyncFiles.forEachWithProgress(reporter, R.string.initial_sync_start_importing_account_joined_rooms, 0.6f) {
+                    importJoinRoom(realm, it, syncLocalTimeStampMillis)
+                }
+                emptyList()
+            }
+            is HandlingStrategy.JOINED       -> {
                 handlingStrategy.data.mapWithProgress(reporter, R.string.initial_sync_start_importing_account_joined_rooms, 0.6f) {
                     handleJoinedRoom(realm, it.key, it.value, isInitialSync, insertType, syncLocalTimeStampMillis)
                 }
-            is HandlingStrategy.INVITED ->
+            }
+            is HandlingStrategy.INVITED      ->
                 handlingStrategy.data.mapWithProgress(reporter, R.string.initial_sync_start_importing_account_invited_rooms, 0.1f) {
                     handleInvitedRoom(realm, it.key, it.value, insertType, syncLocalTimeStampMillis)
                 }
 
-            is HandlingStrategy.LEFT    -> {
+            is HandlingStrategy.LEFT         -> {
                 handlingStrategy.data.mapWithProgress(reporter, R.string.initial_sync_start_importing_account_left_rooms, 0.3f) {
                     handleLeftRoom(realm, it.key, it.value, insertType, syncLocalTimeStampMillis)
                 }
             }
         }
         realm.insertOrUpdate(rooms)
+    }
+
+    private fun importJoinRoom(realm: Realm, file: File, syncLocalTimeStampMillis: Long) {
+        Timber.v("INIT_SYNC handle file ${file.name}, ${file.length()} bytes")
+        file.readText(Charsets.UTF_8)
+                .let { MoshiProvider.providesMoshi().adapter(JoinedRoomSyncResponse::class.java).fromJson(it)!! }
+                .join
+                .also { Timber.v("INIT_SYNC containing ${it.size} rooms") }
+                .map {
+                    handleJoinedRoom(realm, it.key, it.value, true, EventInsertType.INITIAL_SYNC, syncLocalTimeStampMillis)
+                }
+                .let { realm.insertOrUpdate(it) }
     }
 
     private fun handleJoinedRoom(realm: Realm,
