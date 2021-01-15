@@ -16,6 +16,7 @@
 
 package org.matrix.android.sdk.internal.session.sync
 
+import okhttp3.ResponseBody
 import org.matrix.android.sdk.R
 import org.matrix.android.sdk.internal.di.MoshiProvider
 import org.matrix.android.sdk.internal.di.SessionFilesDirectory
@@ -31,10 +32,12 @@ import org.matrix.android.sdk.internal.session.sync.model.SyncResponse
 import org.matrix.android.sdk.internal.session.user.UserStore
 import org.matrix.android.sdk.internal.task.Task
 import org.matrix.android.sdk.internal.util.firstIndexOf
+import retrofit2.Response
 import retrofit2.awaitResponse
 import timber.log.Timber
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.SocketTimeoutException
 import javax.inject.Inject
 import kotlin.math.min
 
@@ -117,9 +120,7 @@ internal class DefaultSyncTask @Inject constructor(
             // Go directly to the parse step
             Timber.v("INIT_SYNC file is already here")
         } else {
-            val syncResponse = syncAPI.syncStream(
-                    params = requestParams
-            ).awaitResponse()
+            val syncResponse = getSyncResponse(requestParams, MAX_NUMBER_OF_RETRY_AFTER_TIMEOUT)
 
             if (syncResponse.isSuccessful) {
                 Timber.v("INIT_SYNC request successful, download and save to file")
@@ -132,9 +133,27 @@ internal class DefaultSyncTask @Inject constructor(
             } else {
                 // Loop for timeout will be handled by the caller
                 throw syncResponse.toFailure(globalErrorReceiver)
+                        .also { Timber.w("INIT_SYNC request failure: $this") }
             }
         }
         handleSyncFile(workingFile)
+    }
+
+    private suspend fun getSyncResponse(requestParams: Map<String, String>, maxNumberOfRetries: Int): Response<ResponseBody> {
+        Timber.v("INIT_SYNC start request...")
+        return try {
+            syncAPI.syncStream(
+                    params = requestParams
+            ).awaitResponse()
+        } catch (throwable: Throwable) {
+            if (throwable is SocketTimeoutException && maxNumberOfRetries > 0) {
+                Timber.w("INIT_SYNC timeout retry left: $maxNumberOfRetries")
+                return getSyncResponse(requestParams, maxNumberOfRetries - 1)
+            } else {
+                Timber.e(throwable, "INIT_SYNC timeout, no retry left, or other error")
+                throw throwable
+            }
+        }
     }
 
     private suspend fun handleSyncFile(workingFile: File) {
@@ -362,6 +381,8 @@ internal class DefaultSyncTask @Inject constructor(
     }
 
     companion object {
+        private const val MAX_NUMBER_OF_RETRY_AFTER_TIMEOUT = 50
+
         private const val TIMEOUT_MARGIN: Long = 10_000
         private const val BUFFER_SIZE = 100 * 1024
 
