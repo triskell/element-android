@@ -116,7 +116,6 @@ internal class DefaultSyncTask @Inject constructor(
         if (workingFile.exists()) {
             // Go directly to the parse step
             Timber.v("INIT_SYNC file is already here")
-            handleSyncFile(workingFile)
         } else {
             val syncResponse = syncAPI.syncStream(
                     params = requestParams
@@ -128,15 +127,14 @@ internal class DefaultSyncTask @Inject constructor(
                     workingFile.outputStream().use { outputStream ->
                         inputStream.copyTo(outputStream)
                     }
-                    Timber.v("INIT_SYNC safeInitialSync() end copy")
-
-                    handleSyncFile(workingFile)
                 }
+                Timber.v("INIT_SYNC safeInitialSync() end copy")
             } else {
                 // Loop for timeout will be handled by the caller
                 throw syncResponse.toFailure(globalErrorReceiver)
             }
         }
+        handleSyncFile(workingFile)
     }
 
     private suspend fun handleSyncFile(workingFile: File) {
