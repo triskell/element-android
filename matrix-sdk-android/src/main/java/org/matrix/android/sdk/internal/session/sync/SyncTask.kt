@@ -142,7 +142,7 @@ internal class DefaultSyncTask @Inject constructor(
 
         Timber.v("INIT_SYNC handleSyncFile() file size $syncResponseLength bytes")
 
-        if (syncResponseLength < MAX_ROOM_FILE_SIZE) {
+        if (syncResponseLength < MAX_SYNC_FILE_SIZE) {
             // OK, no need to split just handle as a regular sync response
             Timber.v("INIT_SYNC no need to split")
             handleTheWholeResponse(workingFile)
@@ -230,7 +230,7 @@ internal class DefaultSyncTask @Inject constructor(
             // Copy first part
             Timber.v("INIT_SYNC copy first part")
             while (cumul < range.indexStart) {
-                val read = raf.read(buffer, 0, min(BUFFER_SIZE, range.indexStart - cumul))
+                val read = raf.read(buffer, 0, min(buffer.size, range.indexStart - cumul))
                 everythingElseOutput.write(buffer, 0, read)
                 cumul += read
             }
@@ -240,7 +240,7 @@ internal class DefaultSyncTask @Inject constructor(
             cumul = range.indexEnd
             var read = 1
             while (read > 0) {
-                read = raf.read(buffer, 0, min(BUFFER_SIZE, syncResponseLength - cumul))
+                read = raf.read(buffer, 0, min(buffer.size, syncResponseLength - cumul))
                 everythingElseOutput.write(buffer, 0, read)
                 cumul += read
             }
@@ -289,7 +289,7 @@ internal class DefaultSyncTask @Inject constructor(
         raf.seek(offset.toLong())
 
         while (read > 0) {
-            read = raf.read(buffer, 0, min(BUFFER_SIZE, syncResponseLength - cumul))
+            read = raf.read(buffer, 0, min(buffer.size, syncResponseLength - cumul))
 
             // Search beginning of joined room section
             val roomBeginIndex = buffer.firstIndexOf(ROOM_BEGIN, read)
@@ -323,12 +323,12 @@ internal class DefaultSyncTask @Inject constructor(
             position += MAX_ROOM_FILE_SIZE
             raf.seek(position.toLong())
 
-            var read = raf.read(buffer, 0, min(BUFFER_SIZE, joinRoomContentIndexes.indexEnd - position))
+            var read = raf.read(buffer, 0, min(buffer.size, joinRoomContentIndexes.indexEnd - position))
             var index = buffer.firstIndexOf(ROOM_SPLIT, read)
             while (index == -1 && read > 0) {
                 // Keep reading
                 position += read
-                read = raf.read(buffer, 0, min(BUFFER_SIZE, joinRoomContentIndexes.indexEnd - position))
+                read = raf.read(buffer, 0, min(buffer.size, joinRoomContentIndexes.indexEnd - position))
                 index = buffer.firstIndexOf(ROOM_SPLIT, read)
             }
             if (index == -1) {
@@ -353,7 +353,7 @@ internal class DefaultSyncTask @Inject constructor(
         target.outputStream().use { output ->
             output.write(SUB_FILE_HEADER.toByteArray())
             while (cumul < size) {
-                val read = raf.read(buffer, 0, min(BUFFER_SIZE, size - cumul))
+                val read = raf.read(buffer, 0, min(buffer.size, size - cumul))
                 output.write(buffer, 0, read)
                 cumul += read
             }
@@ -365,7 +365,11 @@ internal class DefaultSyncTask @Inject constructor(
         private const val TIMEOUT_MARGIN: Long = 10_000
         private const val BUFFER_SIZE = 100 * 1024
 
-        private const val MAX_ROOM_FILE_SIZE = 500 * 1024
+        private const val MAX_SYNC_FILE_SIZE = 1024 * 1024
+
+        // This is actually a min size, since we will try to found the next room separator.
+        // Rooms can be big, so keep a good margin
+        private const val MAX_ROOM_FILE_SIZE = 400 * 1024
 
         private val ROOM_BEGIN = """"join":{"!""".toByteArray()
         private val ROOM_END = """"invite":{""".toByteArray()
