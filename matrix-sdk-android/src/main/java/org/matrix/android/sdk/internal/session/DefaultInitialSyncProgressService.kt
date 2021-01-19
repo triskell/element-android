@@ -134,18 +134,3 @@ inline fun <K, V, R> Map<out K, V>.mapWithProgress(reporter: DefaultInitialSyncP
         reporter?.endTask(taskId)
     }
 }
-
-inline fun <V> List<V>.forEachWithProgress(reporter: DefaultInitialSyncProgressService?,
-                                           taskId: Int,
-                                           weight: Float,
-                                           transform: (V) -> Unit) {
-    val total = count().toFloat()
-    var current = 0
-    reporter?.startTask(taskId, 100, weight)
-    forEach {
-        reporter?.reportProgress((current / total * 100).toInt())
-        current++
-        transform.invoke(it)
-    }
-    reporter?.endTask(taskId)
-}

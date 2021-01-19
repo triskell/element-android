@@ -35,7 +35,6 @@ import org.matrix.android.sdk.internal.session.sync.model.SyncResponse
 import org.matrix.android.sdk.internal.util.awaitTransaction
 import org.matrix.android.sdk.internal.worker.WorkerParamsFactory
 import timber.log.Timber
-import java.io.File
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlin.system.measureTimeMillis
@@ -54,7 +53,7 @@ internal class SyncResponseHandler @Inject constructor(@SessionDatabase private 
                                                        private val processEventForPushTask: ProcessEventForPushTask,
                                                        private val pushRuleService: PushRuleService,
                                                        private val initialSyncProgressService: DefaultInitialSyncProgressService) {
-    suspend fun handleResponse(syncResponse: SyncResponse, fromToken: String?, joinRoomSyncFiles: List<File>?) {
+    suspend fun handleResponse(syncResponse: SyncResponse, fromToken: String?) {
         val isInitialSync = fromToken == null
         Timber.v("Start handling sync, is InitialSync: $isInitialSync")
         val reporter = initialSyncProgressService.takeIf { isInitialSync }
@@ -87,7 +86,7 @@ internal class SyncResponseHandler @Inject constructor(@SessionDatabase private 
                 Timber.v("Handle rooms")
                 reportSubtask(reporter, R.string.initial_sync_start_importing_account_rooms, 100, 0.7f) {
                     if (syncResponse.rooms != null) {
-                        roomSyncHandler.handle(realm, syncResponse.rooms, isInitialSync, reporter, joinRoomSyncFiles)
+                        roomSyncHandler.handle(realm, syncResponse.rooms, isInitialSync, reporter)
                     }
                 }
             }.also {
