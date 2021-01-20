@@ -32,6 +32,8 @@ import org.matrix.android.sdk.internal.session.filter.FilterRepository
 import org.matrix.android.sdk.internal.session.homeserver.GetHomeServerCapabilitiesTask
 import org.matrix.android.sdk.internal.session.sync.model.LazyRoomSyncJsonAdapter
 import org.matrix.android.sdk.internal.session.sync.model.SyncResponse
+import org.matrix.android.sdk.internal.session.sync.poc2.FileInitialSyncStatusRepository
+import org.matrix.android.sdk.internal.session.sync.poc2.InitialSyncStatus
 import org.matrix.android.sdk.internal.session.user.UserStore
 import org.matrix.android.sdk.internal.task.Task
 import retrofit2.Response
@@ -63,6 +65,9 @@ internal class DefaultSyncTask @Inject constructor(
         @SessionFilesDirectory
         private val fileDirectory: File
 ) : SyncTask {
+
+    private val workingDir = File(fileDirectory, "is")
+    private val initialSyncStatusRepository = FileInitialSyncStatusRepository(workingDir)
 
     override suspend fun execute(params: SyncTask.Params) = syncTaskSequencer.post {
         doSync(params)
@@ -109,17 +114,16 @@ internal class DefaultSyncTask @Inject constructor(
         Timber.v("Sync task finished on Thread: ${Thread.currentThread().name}")
     }
 
-    private val workingDir = File(fileDirectory, "is")
-
     private suspend fun safeInitialSync(requestParams: Map<String, String>) {
         Timber.v("INIT_SYNC safeInitialSync()")
         workingDir.mkdirs()
         val workingFile = File(workingDir, "initSync.json")
-
-        if (workingFile.exists()) {
+        val status = initialSyncStatusRepository.getStatus()
+        if (workingFile.exists() && status >= InitialSyncStatus.STATE_DOWNLOADED) {
             // Go directly to the parse step
             Timber.v("INIT_SYNC file is already here")
         } else {
+            initialSyncStatusRepository.setStatus(InitialSyncStatus.STATE_DOWNLOADING)
             val syncResponse = getSyncResponse(requestParams, MAX_NUMBER_OF_RETRY_AFTER_TIMEOUT)
 
             if (syncResponse.isSuccessful) {
@@ -134,6 +138,7 @@ internal class DefaultSyncTask @Inject constructor(
                 throw syncResponse.toFailure(globalErrorReceiver)
                         .also { Timber.w("INIT_SYNC request failure: $this") }
             }
+            initialSyncStatusRepository.setStatus(InitialSyncStatus.STATE_DOWNLOADED)
         }
         handleSyncFile(workingFile)
     }
@@ -163,14 +168,14 @@ internal class DefaultSyncTask @Inject constructor(
         if (syncResponseLength < MAX_SYNC_FILE_SIZE) {
             // OK, no need to split just handle as a regular sync response
             Timber.v("INIT_SYNC no need to split")
-            handleTheWholeResponse(workingFile)
+            handleInitialSyncFile(workingFile)
         } else {
             Timber.v("INIT_SYNC Split into several smaller files")
             // Set file mode
             // TODO This is really ugly, I should improve that
             LazyRoomSyncJsonAdapter.initWith(workingFile)
 
-            handleTheWholeResponse(workingFile)
+            handleInitialSyncFile(workingFile)
 
             // Reset file mode
             LazyRoomSyncJsonAdapter.reset()
@@ -180,10 +185,12 @@ internal class DefaultSyncTask @Inject constructor(
         }
     }
 
-    private suspend fun handleTheWholeResponse(workingFile: File) {
+    private suspend fun handleInitialSyncFile(workingFile: File) {
         val syncResponse = MoshiProvider.providesMoshi().adapter(SyncResponse::class.java)
                 .fromJson(workingFile.source().buffer())!!
+        initialSyncStatusRepository.setStatus(InitialSyncStatus.STATE_PARSED)
         syncResponseHandler.handleResponse(syncResponse, null)
+        initialSyncStatusRepository.setStatus(InitialSyncStatus.STATE_SUCCESS)
     }
 
     companion object {
