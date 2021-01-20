@@ -30,6 +30,7 @@ import org.matrix.android.sdk.internal.network.toFailure
 import org.matrix.android.sdk.internal.session.DefaultInitialSyncProgressService
 import org.matrix.android.sdk.internal.session.filter.FilterRepository
 import org.matrix.android.sdk.internal.session.homeserver.GetHomeServerCapabilitiesTask
+import org.matrix.android.sdk.internal.session.reportSubtask
 import org.matrix.android.sdk.internal.session.sync.model.LazyRoomSyncJsonAdapter
 import org.matrix.android.sdk.internal.session.sync.model.SyncResponse
 import org.matrix.android.sdk.internal.session.sync.poc2.FileInitialSyncStatusRepository
@@ -124,13 +125,17 @@ internal class DefaultSyncTask @Inject constructor(
             Timber.v("INIT_SYNC file is already here")
         } else {
             initialSyncStatusRepository.setStatus(InitialSyncStatus.STATE_DOWNLOADING)
-            val syncResponse = getSyncResponse(requestParams, MAX_NUMBER_OF_RETRY_AFTER_TIMEOUT)
+            val syncResponse = reportSubtask(initialSyncProgressService, R.string.initial_sync_start_server_computing, 0, 0.5f) {
+                getSyncResponse(requestParams, MAX_NUMBER_OF_RETRY_AFTER_TIMEOUT)
+            }
 
             if (syncResponse.isSuccessful) {
                 Timber.v("INIT_SYNC request successful, download and save to file")
-                syncResponse.body()?.byteStream()?.use { inputStream ->
-                    workingFile.outputStream().use { outputStream ->
-                        inputStream.copyTo(outputStream)
+                reportSubtask(initialSyncProgressService, R.string.initial_sync_start_downloading, 0, 0.5f) {
+                    syncResponse.body()?.byteStream()?.use { inputStream ->
+                        workingFile.outputStream().use { outputStream ->
+                            inputStream.copyTo(outputStream)
+                        }
                     }
                 }
                 Timber.v("INIT_SYNC safeInitialSync() end copy")
@@ -181,7 +186,7 @@ internal class DefaultSyncTask @Inject constructor(
             LazyRoomSyncJsonAdapter.reset()
 
             // Delete all files
-            // TODO workingDir.deleteRecursively()
+            workingDir.deleteRecursively()
         }
     }
 
