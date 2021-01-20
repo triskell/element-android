@@ -53,6 +53,7 @@ internal class SyncResponseHandler @Inject constructor(@SessionDatabase private 
                                                        private val processEventForPushTask: ProcessEventForPushTask,
                                                        private val pushRuleService: PushRuleService,
                                                        private val initialSyncProgressService: DefaultInitialSyncProgressService) {
+
     suspend fun handleResponse(syncResponse: SyncResponse, fromToken: String?) {
         val isInitialSync = fromToken == null
         Timber.v("Start handling sync, is InitialSync: $isInitialSync")

@@ -105,18 +105,18 @@ internal class RoomSyncHandler @Inject constructor(private val readReceiptHandle
         }
         val syncLocalTimeStampMillis = System.currentTimeMillis()
         val rooms = when (handlingStrategy) {
-            is HandlingStrategy.JOINED       -> {
+            is HandlingStrategy.JOINED  -> {
                 // TODO Improve perf by splitting in several sub list
                 handlingStrategy.data.mapWithProgress(reporter, R.string.initial_sync_start_importing_account_joined_rooms, 0.6f) {
                     handleJoinedRoom(realm, it.key, it.value.roomSync, isInitialSync, insertType, syncLocalTimeStampMillis)
                 }
             }
-            is HandlingStrategy.INVITED      ->
+            is HandlingStrategy.INVITED ->
                 handlingStrategy.data.mapWithProgress(reporter, R.string.initial_sync_start_importing_account_invited_rooms, 0.1f) {
                     handleInvitedRoom(realm, it.key, it.value, insertType, syncLocalTimeStampMillis)
                 }
 
-            is HandlingStrategy.LEFT         -> {
+            is HandlingStrategy.LEFT    -> {
                 handlingStrategy.data.mapWithProgress(reporter, R.string.initial_sync_start_importing_account_left_rooms, 0.3f) {
                     handleLeftRoom(realm, it.key, it.value, insertType, syncLocalTimeStampMillis)
                 }
